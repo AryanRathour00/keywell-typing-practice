@@ -2,14 +2,50 @@
 (() => {
   const byId = id => document.getElementById(id);
   const savedStars = data.stars || (data.stars = {});
-  const mastered = title => (savedStars[title] || 0) === 5;
-  // Legacy completions without five-star proof do not satisfy the new gate.
-  data.done = data.done.filter(mastered);
+  const variantIndex = data.contentVariantIndex || (data.contentVariantIndex = {});
+  const requiredStars = index => index < 5 ? 3 : 5;
+  const mastered = title => {
+    const index = lessons.findIndex(lesson => lesson.title === title);
+    return index >= 0 && (savedStars[title] || 0) >= requiredStars(index);
+  };
+  // Rebuild cleared lessons from their saved star counts under the current rules.
+  data.done = lessons.filter((lesson, index) => (savedStars[lesson.title] || 0) >= requiredStars(index)).map(lesson => lesson.title);
   completed.clear(); data.done.forEach(title => completed.add(title));
-  const previousStart = window.startLesson;
   let selected = 0;
 
-  // Five-star ratings persist per lesson. Only five stars count as completion.
+  const wordAlternatives = {
+    sun:['moon','star','rain'], map:['note','card','book'], red:['blue','green','gold'], cup:['mug','jar','pan'], box:['bag','case','bin'], joy:['fun','calm','hope'], key:['cap','tab','pin'],
+    people:['teams','friends','learners'], make:['build','create','plan'], time:['hours','today','schedule'], work:['tasks','projects','plans'], learn:['practice','improve','grow'], practice:['train','repeat','type'],
+    beautiful:['wonderful','colorful','helpful'], keyboard:['typing','accuracy','rhythm'], remember:['continue','improve','practice'], comfortable:['confident','consistent','accurate'],
+    monday:['tuesday','wednesday','friday'], september:['october','november','december'], maya:['priya','nina','sara'], omar:['arjun','liam','noah'], boston:['austin','mumbai','seattle'],
+    sam:['alex','maya','lee'], jordan:['riley','casey','taylor'], priya:['maya','nina','sara'], alex:['sam','jordan','riley'],
+    meeting:['review','session','call'], plan:['schedule','outline','draft'], file:['document','report','note'], total:['amount','balance','cost'],
+    quick:['calm','bright','steady'], brown:['small','quiet','kind'], fox:['bird','dog','cat'], jumps:['runs','moves','walks'], lazy:['sleepy','quiet','calm'], dog:['cat','bird','fox']
+  };
+  function nextLessonText(lesson) {
+    const n = (variantIndex[lesson.title] || 0) + 1;
+    variantIndex[lesson.title] = n;
+    let changed = lesson.text.replace(/\b[\w'-]+\b/g, word => {
+      const choices = wordAlternatives[word.toLowerCase()];
+      if (!choices) return word;
+      const replacement = choices[(n - 1) % choices.length];
+      return word[0] === word[0].toUpperCase() ? replacement[0].toUpperCase() + replacement.slice(1) : replacement;
+    });
+    changed = changed.replace(/\d/g, digit => String((Number(digit) + n) % 10));
+    if (changed === lesson.text) {
+      const words = lesson.text.match(/\S+/g) || [];
+      if (words.length > 1) {
+        const shift = n % words.length || 1;
+        changed = words.slice(shift).concat(words.slice(0, shift)).join(' ');
+      } else {
+        changed = [...lesson.text].reverse().join('');
+      }
+    }
+    save();
+    return changed;
+  }
+
+  // The first five lessons clear at three stars; later lessons require five.
   window.lessonCard = function (lesson, index) {
     const stars = savedStars[lesson.title] || 0;
     const isLocked = index > 0 && !mastered(lessons[index - 1].title);
@@ -33,7 +69,8 @@
       <div class="live-metrics"><span>Speed <b id="lwpm">0</b> WPM</span><span>Accuracy <b id="lacc">100%</b></span><span>Errors made <b id="lerr">0</b></span><span>Reset count <b id="lresets">0</b></span></div>
       <div class="prompt" id="prompt"></div><input class="input" id="typebox" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Start typing…">
       <div class="practice-foot"><span class="hint">Alt + ← / → changes lesson · Ctrl + Backspace deletes the previous word · Esc closes</span><button class="finish" id="finish">Finish practice</button></div>`;
-    const input = byId('typebox'), target = lesson.text;
+    const input = byId('typebox');
+    let target = lesson.text;
     const paint = () => {
       const v = input.value;
       byId('prompt').innerHTML = [...target].map((c, j) => `<span class="${j < v.length ? (v[j] === c ? 'typed' : 'wrong') : j === v.length ? 'current' : ''}">${c === ' ' ? '&nbsp;' : c === '\n' ? '<br>' : escapeHtml(c)}</span>`).join('');
@@ -54,29 +91,31 @@
       const acc = good + mistakeCount ? Math.round(good / (good + mistakeCount) * 100) : 0;
       const wpm = Math.round(good / 5 / (seconds / 60));
       const stars = v.length >= target.length ? (acc >= 99 ? 5 : acc >= 98 ? 4 : acc >= 95 ? 3 : acc >= 90 ? 2 : acc >= 80 ? 1 : 0) : 0;
+      const starTarget = requiredStars(index);
+      const passed = !isDaily && stars >= starTarget;
       if (v.length) {
         data.sessions.push({title: lesson.title, wpm, acc, seconds: Math.round(seconds), when: new Date().toISOString()});
         data.days[dayKey()] = true;
         if (!isDaily) {
           savedStars[lesson.title] = Math.max(savedStars[lesson.title] || 0, stars);
-          if (stars === 5 && !completed.has(lesson.title)) { data.done.push(lesson.title); completed.add(lesson.title); }
+          if (passed && !completed.has(lesson.title)) { data.done.push(lesson.title); completed.add(lesson.title); }
         }
         save();
       }
       const next = lessons[index + 1];
-      const nextAvailable = !isDaily && stars === 5 && next;
-      box.innerHTML = `<div class="result"><div class="eyebrow">${stars === 5 ? 'FIVE-STAR MASTERY' : 'PRACTICE RESULT'}</div>
-        <div class="score">${'★'.repeat(stars)}${'☆'.repeat(5-stars)}</div><h2>${stars === 5 ? 'Lesson mastered. Next lesson unlocked.' : 'Keep practicing for five stars.'}</h2>
-        <p>Five stars require the full passage and at least 99% accuracy. ${stars < 5 && !isDaily ? 'This lesson stays locked until you earn all five.' : ''}</p>
+      const nextAvailable = passed && next;
+      box.innerHTML = `<div class="result"><div class="eyebrow">${passed ? 'LESSON CLEARED' : 'PRACTICE RESULT'}</div>
+        <div class="score">${'★'.repeat(stars)}${'☆'.repeat(5-stars)}</div><h2>${passed ? 'Lesson cleared. Next lesson unlocked.' : 'Keep practicing for the required stars.'}</h2>
+        <p>${starTarget} stars clear this lesson. ${!passed && !isDaily ? 'This lesson stays locked until you reach the required rating. Your next try will use different text.' : ''}</p>
         <div class="result-stats"><div><b>${wpm}</b><span>WPM</span></div><div><b>${acc}%</b><span>ACCURACY</span></div><div><b>${mistakeCount}</b><span>ERRORS MADE</span></div><div><b>${resetCount}</b><span>RESETS</span></div></div>
         <button class="finish" id="resultclose">${nextAvailable ? 'Continue to next lesson →' : 'Back to practice'}</button>
-        ${stars < 5 && !isDaily ? '<button class="textlink" id="retry" style="display:block;margin:12px auto 0">Retry this lesson</button>' : ''}</div>`;
+        ${!passed && !isDaily ? '<button class="textlink" id="retry" style="display:block;margin:12px auto 0">Retry with different text</button>' : ''}</div>`;
       byId('resultclose').onclick = () => {
         modal.classList.remove('show'); render();
         if (nextAvailable) { selected = index + 1; setTimeout(() => window.startLesson(index + 1), 0); }
       };
       byId('resultclose').focus();
-      if (stars < 5 && !isDaily) byId('retry').onclick = () => openPractice(lesson, index);
+      if (!passed && !isDaily) byId('retry').onclick = () => openPractice({...lesson, text:nextLessonText(lesson)}, index);
     };
     byId('close').onclick = () => modal.classList.remove('show');
     byId('finish').onclick = finish;
@@ -87,6 +126,7 @@
     input.addEventListener('input', () => { priorValue = input.value; paint(); });
     const resetRun = message => {
       resetCount++; byId('lresets').textContent = resetCount;
+      lesson = {...lesson, text:nextLessonText(lesson)}; target = lesson.text;
       input.value = ''; priorValue = ''; correctionPending = false; uncorrectedErrors = 0; started = Date.now(); paint();
       toast(message);
     };
@@ -159,8 +199,8 @@
     if (e.altKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
       e.preventDefault(); const modalOpen = byId('modal').classList.contains('show');
       const next = Math.max(0, Math.min(lessons.length - 1, selected + (e.key === 'ArrowRight' ? 1 : -1)));
-      if (e.key === 'ArrowRight' && selected < lessons.length - 1 && !mastered(lessons[selected].title)) { toast('Earn five stars to unlock the next lesson.'); return; }
-      if (next > 0 && !mastered(lessons[next - 1].title)) { toast('That lesson is still locked. Earn five stars in the current lesson first.'); return; }
+      if (e.key === 'ArrowRight' && selected < lessons.length - 1 && !mastered(lessons[selected].title)) { toast(`Earn ${requiredStars(selected)} stars to unlock the next lesson.`); return; }
+      if (next > 0 && !mastered(lessons[next - 1].title)) { toast(`That lesson is locked. Earn ${requiredStars(next - 1)} stars first.`); return; }
       selected = next;
       if (modalOpen && byId('resultclose')) { byId('resultclose').click(); return; }
       if (!modalOpen) window.startLesson(next);
