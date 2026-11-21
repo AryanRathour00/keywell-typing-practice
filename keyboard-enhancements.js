@@ -3,11 +3,23 @@
   const byId = id => document.getElementById(id);
   const savedStars = data.stars || (data.stars = {});
   const variantIndex = data.contentVariantIndex || (data.contentVariantIndex = {});
-  const requiredStars = index => index < 5 ? 3 : 5;
+  const foundationStage = 6;
+  const requiredStars = index => Number(lessons[index]?.id || Infinity) <= foundationStage ? 3 : 5;
   const mastered = title => {
     const index = lessons.findIndex(lesson => lesson.title === title);
     return index >= 0 && (savedStars[title] || 0) >= requiredStars(index);
   };
+  const foundationLessons = lessons.filter(lesson => Number(lesson.id) <= foundationStage);
+  const foundationFullyMastered = () => foundationLessons.every(lesson => (savedStars[lesson.title] || 0) >= 5);
+  const isUnlocked = index => {
+    if (index <= 0) return true;
+    const lesson = lessons[index], previous = lessons[index - 1];
+    if (!lesson || !previous || !mastered(previous.title)) return false;
+    return Number(lesson.id) <= foundationStage || foundationFullyMastered();
+  };
+  const lockMessage = index => Number(lessons[index]?.id) > foundationStage && !foundationFullyMastered()
+    ? 'Earn 5 stars on every lesson through stage 06 to unlock later stages.'
+    : `Earn ${requiredStars(index - 1)} stars to unlock this lesson.`;
   // Rebuild cleared lessons from their saved star counts under the current rules.
   data.done = lessons.filter((lesson, index) => (savedStars[lesson.title] || 0) >= requiredStars(index)).map(lesson => lesson.title);
   completed.clear(); data.done.forEach(title => completed.add(title));
@@ -45,10 +57,10 @@
     return changed;
   }
 
-  // The first five lessons clear at three stars; later lessons require five.
+  // Stages 01–06 advance at three stars; anything beyond stage 06 waits for five-star mastery throughout the foundation.
   window.lessonCard = function (lesson, index) {
     const stars = savedStars[lesson.title] || 0;
-    const isLocked = index > 0 && !mastered(lessons[index - 1].title);
+    const isLocked = !isUnlocked(index);
     const isDone = mastered(lesson.title);
     return `<div class="lesson ${isLocked ? 'locked' : ''} ${isDone ? 'done' : ''}" role="button" tabindex="${isLocked ? '-1' : '0'}" aria-disabled="${isLocked}" ${isLocked ? '' : `onclick="startLesson(${index})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();startLesson(${index})}"`}>
       <div class="lesson-num">${isDone ? '✓' : String(index + 1).padStart(2, '0')}</div>
@@ -103,10 +115,11 @@
         save();
       }
       const next = lessons[index + 1];
-      const nextAvailable = passed && next;
+      const nextAvailable = passed && next && isUnlocked(index + 1);
+      const nextLockedByFoundation = passed && next && !nextAvailable && Number(next.id) > foundationStage;
       box.innerHTML = `<div class="result"><div class="eyebrow">${passed ? 'LESSON CLEARED' : 'PRACTICE RESULT'}</div>
-        <div class="score">${'★'.repeat(stars)}${'☆'.repeat(5-stars)}</div><h2>${passed ? 'Lesson cleared. Next lesson unlocked.' : 'Keep practicing for the required stars.'}</h2>
-        <p>${starTarget} stars clear this lesson. ${!passed && !isDaily ? 'This lesson stays locked until you reach the required rating. Your next try will use different text.' : ''}</p>
+        <div class="score">${'★'.repeat(stars)}${'☆'.repeat(5-stars)}</div><h2>${passed ? (nextAvailable ? 'Lesson cleared. Next lesson unlocked.' : nextLockedByFoundation ? 'Lesson cleared. Stage 07 stays locked.' : 'Lesson cleared.') : 'Keep practicing for the required stars.'}</h2>
+        <p>${starTarget} stars clear this lesson. ${nextLockedByFoundation ? 'Every lesson through stage 06 needs 5 stars before later stages unlock.' : !passed && !isDaily ? 'This lesson stays locked until you reach the required rating. Your next try will use different text.' : ''}</p>
         <div class="result-stats"><div><b>${wpm}</b><span>WPM</span></div><div><b>${acc}%</b><span>ACCURACY</span></div><div><b>${mistakeCount}</b><span>ERRORS MADE</span></div><div><b>${resetCount}</b><span>RESETS</span></div></div>
         <button class="finish" id="resultclose">${nextAvailable ? 'Continue to next lesson →' : 'Back to practice'}</button>
         ${!passed && !isDaily ? '<button class="textlink" id="retry" style="display:block;margin:12px auto 0">Retry with different text</button>' : ''}</div>`;
@@ -157,6 +170,7 @@
     input.focus(); paint();
   }
   window.startLesson = function (index, benchmark = false) {
+    if (!benchmark && !isUnlocked(index)) { toast(lockMessage(index)); return; }
     const lesson = benchmark ? {...lessons.at(-1), title: 'Mixed benchmark', text: texts['100 WPM benchmark']} : lessons[index];
     openPractice(lesson, index, benchmark);
   };
@@ -199,8 +213,8 @@
     if (e.altKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
       e.preventDefault(); const modalOpen = byId('modal').classList.contains('show');
       const next = Math.max(0, Math.min(lessons.length - 1, selected + (e.key === 'ArrowRight' ? 1 : -1)));
-      if (e.key === 'ArrowRight' && selected < lessons.length - 1 && !mastered(lessons[selected].title)) { toast(`Earn ${requiredStars(selected)} stars to unlock the next lesson.`); return; }
-      if (next > 0 && !mastered(lessons[next - 1].title)) { toast(`That lesson is locked. Earn ${requiredStars(next - 1)} stars first.`); return; }
+      if (e.key === 'ArrowRight' && selected < lessons.length - 1 && !isUnlocked(selected + 1)) { toast(lockMessage(selected + 1)); return; }
+      if (!isUnlocked(next)) { toast(lockMessage(next)); return; }
       selected = next;
       if (modalOpen && byId('resultclose')) { byId('resultclose').click(); return; }
       if (!modalOpen) window.startLesson(next);
