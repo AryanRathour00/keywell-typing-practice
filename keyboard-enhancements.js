@@ -192,7 +192,7 @@
     'Please check the names, numbers, and punctuation before sharing it.',
     'If anything changes, update the note and notify everyone by 10:15.',
     'The details are final; save a copy as “Plan_2026-11-20.pdf”.',
-    'Thanks for checking—let me know if you need another version!',
+    'Thanks for checking; let me know if you need another version!',
     'Use code RIVER_26! when prompted, then choose option 4.'
   ];
   const dailyPassages = Array.from({length: 730}, (_, i) => `${passageOpeners[i % passageOpeners.length]} ${passageContexts[Math.floor(i / passageOpeners.length) % passageContexts.length]}. Reference: KW-${String(i + 1).padStart(4, '0')}. ${passageClosers[(i * 7 + Math.floor(i / 12)) % passageClosers.length]}`);
